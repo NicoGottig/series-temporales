@@ -1,0 +1,209 @@
+---
+title: "**Trabajo práctico 1**"
+subtitle: "Series de Tiempo - Maestría en Estadística Aplicada"
+author: "Nicolás Gottig"
+date: "Marzo - 2024"
+geometry: 
+  - top=2cm
+  - bottom=2cm
+  - left=2cm
+  - right=2cm
+documentclass: article
+bibliography: bibliografia.bib
+link-citations: yes
+biblio-style: "apa"
+header-includes:
+
+  - \usepackage{titling}
+  - \usepackage{setspace} # Agregar el paquete setspace para el interlineado
+  - \setstretch{1.15}    # Establecer el interlineado en 1.15
+
+  - \pretitle{\begin{center}\LARGE\includegraphics[width=4cm]{Logo-Unr-1.png}\\[\bigskipamount]}
+  - \posttitle{\end{center}}
+  
+  - \renewcommand{\figurename}{Figura}
+
+output: 
+  pdf_document: 
+    latex_engine: xelatex
+mainfont: Noto
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, fig.align = "center", out.height = "50%", out.width = "50%")
+library(extrafont)
+loadfonts()
+
+library(tidyverse)
+library(lubridate)
+library(showtext)
+library(xts)
+library(ggseas)
+library(tseries)
+library(forecast)
+library(gridExtra)
+
+showtext_auto()
+font_add_google(name = "Noto Sans", family = "Noto")
+
+# Tema de gráficos
+theme_set(
+  theme_light(
+    base_family = "Lato") +
+    theme(
+      legend.title = element_text(face = "bold"),
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "bottom",
+      text = element_text(size = 6),
+      axis.text.x = element_text(size = 10),
+      strip.text = element_text(color = "black"),
+      strip.background = element_blank()
+      # axis.title = element_text(face = "bold"),
+    )
+)
+
+
+```
+
+```{r}
+data <- read.csv("cinear-horasVisitadas.csv")
+
+data$indice_tiempo <- as.Date(data$indice_tiempo, format = "%Y-%m-%d")
+
+colnames(data) <- c("fecha", "visitas")
+
+visitas = ts(data$visitas, 
+           frequency = 12, 
+           start = c(2015,01))
+```
+
+## Introducción y Descripción de la Serie
+El conjunto de datos brinda información sobre la cantidad de horas de visualización por mes en la plataforma **Cine.AR Play**, canal de televisión abierto y operado por la Secretaría de Medios y Comunicación Pública, dedicado a la emisión de películas de origen nacional. El entendimiento y el pronóstico de esta magnitud permite reducir la incertidumbre para las decisiones de, por ejemplo, la inversión en infraestructura o tecnología, así como el efecto de decisiones de difusión.  
+  
+Se obtienen 100 observaciones con frecuencia mensual, desde noviembre del 2015 hasta febrero del 2024, de la cantidad de horas de visualización, independientemente del usuario que las realice. El mismo fue publicado por la empresa ARSAT y se actualiza de forma mensual. Los datos están disponibles en el siguiente *[enlace](https://datos.arsat.com.ar/dataset/cinear-play/archivo/4e44f9ec-e280-4cc3-84f3-ea9935f0165a)*.  
+En la figura 1 se observa la evolución de las horas visitadas: 
+
+```{r evolucion de las visitas, fig.cap="Evolución de las horas visitadas mensuales (2015-2024)"}
+
+# Crear un vector de años intercalados
+
+serie <- data %>% 
+  ggplot() +
+  aes(x = fecha, y = visitas) +
+  theme(text = element_text(size = 10), 
+        axis.text.x = element_text(size = 8, angle = 90)) +
+  xlab("Periodo") +
+  ylab("Visitas") +
+  geom_rect(aes(xmin = as.Date("2015-11-01"),
+            xmax = as.Date("2016-06-01"),
+            ymin = -Inf, 
+            ymax = Inf), 
+            fill = "gray", 
+            alpha = .01) +
+  geom_rect(aes(xmin = as.Date("2020-03-01"),
+            xmax = as.Date("2021-03-01"),
+            ymin = -Inf, 
+            ymax = Inf), 
+            fill = "gray", 
+            alpha = .01) +
+  geom_line(col = "#057855", linewidth = .5) 
+plot(serie)
+```
+
+Se evidencia que a fines del año 2015, así como a principios del 2020, hubo notables incrementos en el consumo de esta plataforma. Por otro lado, en el 50 % de los meses bajo análisis hubo a lo sumo 77.743 horas de visualización, siendo 34.752 el mínimo en el periodo y 221.281 el máximo, y encontrándose la dispersión central (rango intercuartílico) entre 61.064 y 94.593 horas. También se observa un comportamiento estacional en el año, incrementándose las horas de visualización alrededor de agosto.   
+  
+Asimismo, en el periodo contemplado se observa una tendencia decreciente en la permanencia en la plataforma, a excepción de algunos meses de 2015 y 2016 (coincidente con el lanzamiento oficial) y algunos meses del año 2020, posiblemente por el contexto epidemiológico. Luego del efecto inicial la crisis sanitaria, la serie recupera la tendencia decreciente en su uso.
+
+Se oberva, además, que si se desagregan los años, en la mayoría de ellos la cantida de visitas oscila alrededor de 7500 ingresos, a excepción del año 2020, con casi el triple de visitas que el resto de los años. Por último, la serie parece no es estacionaria en media, y parece no ser estacionaria en varianza.   
+
+
+```{r visualizacion de la serie, fig.cap="En orden: distribución de las visitas, visistas desagregadas por año, visitas desagregadas por mes, y diferencias con distribución normal",  out.width = "70%"}
+
+serie <- data %>% 
+  ggplot() + 
+  aes(x= fecha, y = visitas) +
+  geom_line(size = .75, col = "#057855") + 
+  ylab("Visitas") + 
+  xlab("Periodo")
+
+visitas.hist <- ggplot(data) +
+  aes(x = visitas) +
+  geom_histogram(bins = 10, fill = "#057855", col = "black") +
+  xlab("Visitas") +
+  ylab("Cantidad") +
+  theme(axis.text.x = element_text(angle = 90, size = 6)) 
+
+visitas.mes <- data %>% 
+  mutate(mes = month(fecha)) %>% 
+  ggplot(aes(y = visitas, x = factor(mes))) +
+  geom_boxplot(fill = "#057855", color = "black") +
+  xlab("Meses del año") +
+  ylab("Visitas") +
+  theme(axis.text.x = element_text(angle = 90, size = 6)) 
+
+paleta_colores <- c("#FAF500", "#CFCD23", "#7A793D", "#CF7C23", "#A57037", "#00CEF9", "#23B3CF", "#3D707A", "#354B50", "#2B3233")
+
+visitas.anio <- data %>% mutate(mes = month(fecha), anio = year(fecha)) %>% 
+  ggplot() + 
+  aes(x = as.factor(mes), y = visitas, group = anio, color = as.factor(anio))%>% 
+  geom_line(linewidth = .7) +
+  xlab("Mes") + 
+  ylab("Visitas") +
+  theme(legend.text = element_text(size = 6)) +
+  labs(color = "") + 
+    scale_color_manual(values = paleta_colores)
+
+qq.norm <- ggplot(data, aes(sample=visitas)) +
+  stat_qq() + 
+  stat_qq_line() +
+  xlab("Cuantiles teóricos") +
+  ylab("x")
+
+grid.arrange(visitas.hist, visitas.anio, visitas.mes, qq.norm, nrow = 2)
+
+```
+
+## Descomposición de la Serie
+La descomposición de la serie permitirá identificar sus componentes: la tendencia, la estacionalidad (patrones recurrentes en ciertos intervalos) y el componente de "innovación" [@pena_alisis_2005] que se refiere al componente que recoje los efectos exógenos al comportamiento histórico en las horas visitadas. En la tendencia se puede observar lo descrito anteriormente: A partir de 2016 existe un comportamiento decreciente en el consumo de la plataforma, afectado posteriormente por el comportamiento de los consumidores durante la pandemia.    
+Por otro lado, en el componente estacional se identifican ciclos de 12 meses, diferenciando los primeros y últimos meses del año respecto a meses como julio y septiembre, con un aumento notable en la actividad de la aplicación. Por último, el error sugiere tener un comportamiento estacionario respecto a la media, influído por comportamientos atípicos en 2015 y 2020: 
+
+```{r Descomposición, fig.cap = "Descomposición de la serie",  out.width = "50%", out.height= "30%"}
+desc.aditiva <- decompose(visitas, type = "additive")
+
+pl1 <- autoplot(desc.aditiva[[3]]) + xlab("Periodo") + ylab("Tendencia") + theme(text = element_text(size = 10))
+pl2 <- autoplot(desc.aditiva[[2]]) + xlab("") + ylab("Ciclo") + theme(text = element_text(size = 10))
+pl3 <- autoplot(desc.aditiva[[4]]) + xlab("") + ylab("Error") + theme(text = element_text(size = 10))
+
+grid.arrange(pl1, pl2, pl3, nrow = 3)
+
+```
+
+## Análisis de autocorrelación
+La autocovarianza así como la autocorrelación proveen información sobre la dependencia en observaciones contiguas al valor en el periodo actual.
+En el el gráfico de autocorrelación total se observa que en los últimos cuatro periodos, los coeficientes de autocorrelación son significativamente distintos de 0, y a medida que que incorporamos más rezagos, la dependencia entre los periodos disminuye de forma exponencial. En la autocorrelación parcial, que indica el coeficiente de correlación con cada rezago de forma individual, se observa que las visitas del mes están condicionadas por las cantidades de visitas del mes anterior[@enders_applied_2015].  
+
+Las lineas paralelas representan una aproximación a un intervalo de confianza del 95 % de la forma $^+_-3/\sqrt{T}$ (función acf). Por otro lado, el correlograma de autocorrelación parcial, que describe los efectos directos de las observaciones separadas. [@pena_alisis_2005] sugiere que el primer rezago es significativo, indicando una estructura AR(1). Es decir, un proceso markoviano, con propiedades de memoria respecto del periodo anterior al analizado: $f(y_{t+1}|y_t)$ siendo $y$ la cantidad de visitas y $t = 1, 2, 3...$ los periodos. 
+  
+En este caso, se identifican que los cuatro primeros rezagos son importantes para las últimas visitas identificadas.
+
+```{r autocorrelación, fig.cap="Autocorrelación Total y Parcial"}
+
+# Autocorrelación sin primeras diferencias
+g1 = ggAcf(data$visitas, ) + ggtitle("Autocorrelación total")  # MA 
+g2 = ggPacf(data$visitas) + ggtitle("Autocorrelación parcial") # AR
+
+grid.arrange(g1,g2, nrow = 1)
+
+```
+
+# Conclusión
+Se analizaron 100 observaciones que miden las horas de visualización en la plataforma **Cine.AR Play**. Se observó una tendencia decreciente, con niveles atípicos de visitas durante los años 2015 y 2020, como efecto del lanzamiento oficial y la pandemia. También se identificaron ciclos de un año, con auge de visitas durante los meses de julio y septiembre.  
+Por último, con una confianza cercana al 95 %, las cantidades de las visitas de un mes están correlacionadas de forma positiva con las visitas del mes anterior.   
+
+
+# Bibliografía
+
+
+
+
+

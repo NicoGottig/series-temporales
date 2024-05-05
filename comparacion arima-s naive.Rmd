@@ -1,0 +1,580 @@
+---
+title: "**Trabajo práctico 2**"
+subtitle: "Series de Tiempo - Maestría en Estadística Aplicada"
+author: "Nicolás Gottig"
+date: "Abril - 2024"
+geometry: 
+  - top=2cm
+  - bottom=2cm
+  - left=2cm
+  - right=2cm
+documentclass: article
+bibliography: bibliografia.bib
+link-citations: yes
+biblio-style: "apa"
+header-includes:
+
+  - \usepackage{titling}
+  - \usepackage{setspace} # Agregar el paquete setspace para el interlineado
+  - \setstretch{1.15}    # Establecer el interlineado en 1.15
+
+  - \pretitle{\begin{center}\LARGE\includegraphics[width=4cm]{Logo-Unr-1.png}\\[\bigskipamount]}
+  - \posttitle{\end{center}}
+  
+  - \renewcommand{\figurename}{Figura}
+
+output: 
+  pdf_document: 
+    latex_engine: xelatex
+mainfont: Lato
+---
+```{r cargo librerias y setup, echo=F, message=F, warning=F}
+knitr::opts_chunk$set(echo = F, warning = F, message = F, fig.align = "center", out.height = "50%", out.width = "50%")
+# tinytex::tlmgr_install("accanthis")
+
+library(tidyverse)
+library(lubridate)
+library(showtext)
+library(extrafont)
+library(xts)
+library(ggseas)
+library(tseries)
+library(forecast)
+library(patchwork)
+library(gridExtra)
+library(lmtest)
+library(knitr)
+library(kableExtra)
+library(flextable)
+
+showtext_auto()
+font_add_google(name = "Lato", family = "Lato")
+
+# Tema de gráficos
+theme_set(
+  theme_light(
+    base_family = "Lato") +
+    theme(
+      legend.title = element_text(face = "bold"),
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "bottom",
+      text = element_text(size = 10),
+      axis.text.x = element_text(size = 10),
+      strip.text = element_text(color = "black"),
+      strip.background = element_blank()
+      # axis.title = element_text(face = "bold"),
+    )
+)
+
+```
+
+# Introducción  
+
+Las métodos de pronóstico para series de tiempo se utilizan en los más diversos ámbitos: mientras una empresa reduce su incertidumbre respecto al stock estimando la cantidad de ventas el próximo año, podría ser de interés conocer la temperatura en un proceso productivo extenso, para futuros proyectos productivos, o a una universidad podría interesarle las cantidades futuras de estudiantes que ingresaran en cada una de las carreras que forman parte de la oferta académica, a los efectos de organizar los recursos con los que cuenta.  
+
+En este trabajo se propone discutir y comparar métodos tradicionales de pronósticos de series univariadas, así como las posibles transformaciones que garantizan características deseables, tal como la estacionariedad en media y en varianza. Para esto, luego de un breve marco teórico, se compararán distintos métodos de pronóstico a través de la raíz del error cuadrático medio (RMSE por sus siglas en inglés) y se realizarán las estimaciones para los próximos 12 meses del último dato de la serie, la cual describe las cantidades mensuales de pasajeros de aerolinea entre 1949 y 1960, provisto por Box & Jenkins (1979).  
+
+# Marco teórico  
+Considerando un proceso estocástico $y = \{y_1,...,y_n\}$ bajo ciertas condiciones es posible estimar el valor de $\hat{y}_{t+h}$ teniendo información sobre los valores pasados de la variable. En la práctica, suelen utilizarse como benchmark métodos simples de pronóstico basados en el promedio (con o sin tendencia), el método Naïve, o el método de Naïve Estacional, y pueden compararse medidas de error respecto a modelos más complejos como los de la familia SARIMAX.  
+
+Los modelos que se utilizarán en este trabajo son, especificamente, el modelo basado en el promedio: $\hat{y}_{t+h|T} = (y_1+...+y_t)/T$ que expresa directamente el promedio de la serie, el modelo naive $\hat{y}_{t+h|T}=y_t$ en donde el valor actual depende del valor del periodo inmediatamente anterior, y el modelo naive estacional $\hat{y}_{t+h|T}=y_{t+h-m(k+1)}$ en donde se incorporan tendencias en ciclos más cortos de la serie. Por otro lado, la forma general de un modelo SARIMA puede ser representada por:
+
+$$\phi_p(G)\phi_p(G^s )(1-G)^d (1-G^s )^D Y_t = \gamma_q(G)w_Q(G^s)e_t $$  
+
+
+Donde $\phi_p(G)$ y $\gamma_q(G)$ son los coeficientes de la estructura no estacional, mientras que $\phi_p(G^s)$ y $w_Q(G^s)$ son los componentes autorregresivos que se deben estimar, correspondientes al componente estacional. Ambas estructuras están diferenciadas en $(1-G)$ y $(1-G^s)$ $d$ y $D$ veces. Por último $e$ es el error [@alharbi_seasonal_2022], estimado a través de los residuos. Cuando el valor esperado de la serie varía con una pauta cíclica deben incluirse estos efectos de forma determinística (discriminando el componente estacional de la serie original) o estocástica (a través de una estructura estacional en el modelo ARIMA).  
+
+Aunque existen factores exógenos a la serie que condicionan su evolución y pueden modelarse a través de modelos multivariados (Ej. a través de modelos de vectores autorregresivos) [@pena_alisis_2005], el objetivo de este trabajo es realizar pronósticos basados en la "memoria" de la serie. Por lo tanto, es importante recoger todos los efectos de periodos pasados, asumiendo ciertas condiciones sobre los errores: además de que estén incorrelacionados entre ellos, asumiremos que se distribuyen como una normal centrada en cero y con varianza constante. Mientras que la estacionariedad en media puede resolverse a través de la diferenciación $(\nabla^1y_t)$ de la serie, la estacionariedad en varianza puede resolverse a través de las transformaciones invertibles, como las de potencia propuestas por Box & Cox [@del_rosso_series_2024]: 
+
+$$ T^{\lambda}(Y_t) \left\{\begin{matrix}
+ \frac{Y_t^\lambda-1}{\lambda}&  para & \lambda\neq0\\ 
+ ln(Y_t) &  para & \lambda=0 \\
+ \end{matrix}\right.$$
+
+Para la obtención del parámetro $\lambda$ se utilizará el paquete *Forecast*, el cual incluye una función que busca el valor de $\lambda$ que minimiza el coeficiente de variación entre distintos subconjuntos de la serie.  
+
+Dado que en general el objetivo de ajustar una estructura matemática a una serie se hace con el objetivo de pronosticar su valor en el futuro, son de interés los posibles errores que pueden cometerse, y se estiman a través de las diferencias entre los valores pronosticados y los valores reales de la serie en un segmento específico. Para obtenerlos, se separa la serie en un conjunto de entrenamiento o *training* con el que se ajusta el modelo, y otro conjunto en donde se prueban las predicciones del modelo ajustado, denominada conjunto de prueba o *test*. A partir de estas diferencias pueden construirse estadísticos que permitan comparar la eficiencia predictiva de los modelos, permitiendo compararlos y seleccionar aquel con menor error de pronóstico. Existen medidas de error que no dependen de la escala de la variable, como el error porcentual del producto medio (MAPE por sus siglas en inglés) mientras que los que utilizaremos en este trabajo si dependen de la escala, concentrándonos en la raíz cuadrada del error absoluto medio:
+
+$$RMSE = \sqrt{\Sigma_{t=0}^{T}(\frac{e^2_t}{T})}$$
+Siendo $e^2 _t= y_t - \hat{y}_{t|t-h}$ en donde $\hat{y}_{t|t-h}$ es el valor pronosticado de $y$ en un momento $t$ dado el valor de $y$ en h periodos pasados. Al calcular su promedio y luego su raíz cuadrada, son expresados en la misma unidad de medida y por ende de fácil interpretación.   
+Otra metodología para la evaluación de los errores es a través de la *validación cruzada*, que consiste en una serie de conjuntos de prueba basados en una sola observación, que se contrasta con un pronóstico basado en observaciones previas.  
+
+# Análisis de datos
+La cantidad de pasajeros en la aerolinea parece tener un incremento constante desde la primera observación (enero de 1949). Sin embargo, parecen existir ciclos de un año: esto indica la presencia de estacionalidad en el comportamiento de la variable.  
+Por otro lado, las diferencias entre las máximas y las mínimas cantidades de pasajeros crece en el tiempo, esto sugiere que la serie no es estacionaria en varianza. Estas características pueden identificarse mejor descomponiendo la serie en la tendencia, la estacionalidad y el error (figura 1), permitiéndonos identificar que en ciclos de un año, hay mayor cantidad de pasajeros en el intervalo junio-agosto, aunque el mes de marzo ya existe una cantidad mayor de pasajeros en comparación con el resto del año. A continuación, se divide el conjunto de datos y se contrastan las estimaciones con el conjunto de prueba.
+
+```{r descomposicion, fig.cap="Evolución de los pasajeros mensuales"}
+
+data <- AirPassengers
+
+desc.multiplicativa <- decompose(data, type = "multiplicative")
+
+pl2 <- autoplot(desc.multiplicativa[[3]]) + xlab("Periodo") + ylab("Tendencia") + theme(text = element_text(size = 10))
+pl3 <- autoplot(desc.multiplicativa[[2]]) + xlab("") + ylab("Ciclo") + theme(text = element_text(size = 10))
+pl4 <- autoplot(desc.multiplicativa[[4]]) + xlab("") + ylab("Error") + theme(text = element_text(size = 10))
+pl1 <- autoplot(desc.multiplicativa[[1]]) + xlab("") + ylab("Pasajeros") + theme(text = element_text(size = 10))
+
+grid.arrange(pl1, pl2, pl3, pl4, nrow = 2)
+
+```
+  
+En primer lugar, se realizarán los pronosticos con un modelo basado en la media, el método Naïve y el Naïve estacional para un horizonte temporal de 12 meses. Se compararán dichos pronósticos con el conjunto de prueba, y se informarán los errores del pronóstico:
+
+```{r estimacion basicos, fig.cap = "Comparación de los modelos básicos"}
+training <- window(data,
+                   start = 1949, 
+                   end = c(1959,12))
+
+testing <- window(data, 
+                  start = 1960)
+
+# Modelos
+modelo1 <- meanf(training, h = 12)
+modelo2 <- rwf(training,h = 12)
+modelo3 <- snaive(training,h = 12)
+
+# Fechas pronostico
+fecha.test <- seq(as.Date("1960-01-01"), as.Date("1960-12-01"), by = "month")
+
+primer_modelo <- bind_rows(data.frame(fecha = fecha.test, as_tibble(modelo1), tipo = "Media"),
+                           data.frame(fecha = fecha.test, as_tibble(modelo2), tipo = "Naive"),
+                           data.frame(fecha = fecha.test, as_tibble(modelo3), tipo = "Naive estacional")) 
+
+# df de data
+df.data <- data.frame(fecha = seq(as.Date("1949-01-01"), as.Date("1960-12-01"), by = "month"), pasajeros = data)
+df.data$tipo <- c(rep("training", 132), rep("test", 12))
+
+# Agrego test
+df.data <- primer_modelo %>% 
+  select(fecha, pasajeros = Point.Forecast, tipo) %>% 
+  rbind(df.data)
+
+# plot modelos simples
+modelos <- ggplot(df.data, aes(x = fecha, y = pasajeros, col = tipo)) +
+  geom_point(size = 0.7) +
+  geom_line() 
+
+modelos
+```
+    
+Se puede observar que, en general, los modelos tienden a subestimar los pronósticos frente al conjunto de prueba. Comparando las medidas de ajuste (basadas en el residuo como mejor proxy del error) para distintos horizontes temporales (h) se puede observar que el pronóstico Naïve como el Naïve estacional son notablemente mejores que el modelo basado en la media. Sin embargo, el naive estacional tiene menos error en las predicciones del mes de enero y diciembre, efecto de las características de la serie. Por último, analizando los residuos de los modelos ajustados, se observa que ninguno cumple con los supuestos sobre la distribución de los errores: el modelo de Naive estacional tiene residuos cuya normalidad no puede ser rechazada aunque no está centrada en cero, y los errores están correlacionados.    
+  
+
+
+```{r tablas error 1, message=FALSE, warning=FALSE}
+
+# Validación
+cv_modelo1 <- tsCV(training, meanf, h = 12)
+cv_modelo2 <- tsCV(training, rwf, h = 12)
+cv_modelo3 <- tsCV(training, snaive, h = 12)
+
+
+# RMSE
+rmse_1 <- data.frame(modelo = c("media", "naive", "naive est."), 
+                     rbind(round(sqrt(colMeans(cv_modelo1^2, na.rm = T)),2), 
+                           round(sqrt(colMeans(cv_modelo2^2, na.rm = T)),2), 
+                           round(sqrt(colMeans(cv_modelo3^2, na.rm = T)),2)))
+
+colnames(rmse_1) <- c("Modelo | H ", paste("h", seq(1:12)))
+
+tabla <- kable(rmse_1) %>%
+  kable_styling(font_size = 8, latex_options = "hold_position") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_classic(full_width = T) 
+
+tabla
+
+```
+\begin{center}
+Tabla 01: Indicadores de error por modelo y horizonte
+\end{center}
+
+## Modelos alternativos para el pronóstico de pasajeros
+
+Como alternativa, se ajustarán una serie de modelos pertenecientes a la familia SARIMA en la serie, bajo ciertas transformaciones. En la figura 1 pudimos observar que en ciertos periodos el componente de innpovación [@pena_alisis_2005] se producen con mayor variabilidad en ciertos periodos. Además, observamos que la serie tiene tendencia. Para solucionar esto se propone las siguientes transformaciones, que provocan la necesidad de ajustar los valores pronosticados por las operaciones inversas:  
+
+* En primer lugar, realizar transformaciones de box cox para el parámetro $\lambda = -0.3$, el mismo fue definido reduciendo el coeficiente de variación en múltiples segmentos del conjunto de datos con la librería *Forecast*.  
+
+* En segundo lugar, se calcularán las primeras diferencias de la serie $\nabla Y_t = Y_{t}-Y_{t-1}$ a los efectos de obtener estacionariedad. En caso de que la serie no sea estacionaria, podría diferenciarse más veces con el riesgo, entre otras cosas, de perder invertibilidad.  
+
+
+
+```{r suavizado, fig.cap = "Serie transformada y autocorrelación",  out.width = "50%", out.height= "30%"}
+
+# BoxCox.lambda(data)
+df.data <- data.frame(fecha = seq(as.Date("1949-01-01"), as.Date("1960-12-01"), by = "month"), pasajeros = data)
+
+# lambda -0.30
+data.lamb <- (data^(-0.30)-1)/(-0.30)
+
+# Errores lambda 0
+desc.lamb <- decompose(data.lamb, type = "multiplicative")
+
+# Gráficos
+df.data$lamb <- data.lamb
+
+# Serie diferenciada
+df.data$dif.lamb <- c(NA, diff(data.lamb))
+
+# Analizamos la autocorrelación
+g1 = ggAcf(df.data$lamb, lag.max = 36) + 
+  labs(title = "Serie sin diferenciar") + 
+  theme_light() + 
+  theme(legend.position = "none", title = element_text(size = 8)) # MA 
+
+g2 = ggAcf(df.data$dif.lamb, lag.max = 36) + 
+  labs(title = "Serie diferenciada") + 
+  theme_light() +
+  theme(legend.position = "none", title = element_text(size = 8)) # AR
+
+g3 = ggPacf(df.data$lamb, lag.max = 36) + 
+  ggtitle("Serie sin diferenciar") + 
+  theme_light() + 
+  theme(legend.position = "none", title = element_text(size = 8)) # MA 
+
+g4 = ggPacf(df.data$dif.lamb, lag.max = 36) + 
+  ggtitle("Serie diferenciada") + 
+  theme_light() + 
+  theme(legend.position = "none", title = element_text(size = 8)) # AR
+
+# Ggplot de transformaciones
+plot.transformacion1 <- df.data %>% 
+  select(fecha, `Suavizado lambda = -0.3` = lamb, `Suavizado y Diferencia` = dif.lamb) %>% 
+  select(fecha, `Suavizado lambda = -0.3`) %>% 
+  ggplot() +
+  aes(x = fecha, y = `Suavizado lambda = -0.3`) +
+  labs(title = "Serie suavizada") + 
+  geom_line(col = "orange") +
+  geom_point(col = "orange", size = .5) +
+  theme(legend.position = "none", title = element_text(size = 8))
+
+plot.transformacion2 <- df.data %>% 
+  select(fecha, `Suavizado lambda = -0.3` = lamb, `Suavizado y Diferencia` = dif.lamb) %>% 
+  select(fecha, `Suavizado y Diferencia`) %>% 
+  ggplot() +
+  aes(x = fecha, y = `Suavizado y Diferencia`) +
+  geom_line(col = "steelblue") +
+  geom_point(col = "steelblue", size = .5) +
+  labs(title = "Serie suavizada y diferen.") + 
+  theme(legend.position = "none", title = element_text(size = 8))
+
+grid.arrange(plot.transformacion1, 
+             g1,
+             g2,
+             plot.transformacion2,
+             g3,
+             g4,
+             nrow = 2)
+
+```
+
+Dado que la serie sugiere la existencia de patrones estacionales en el año [@gomez_tecnicas_2006] se deberá incluir este efecto en la especificación del modelo. Por otro lado, si observamos el correlograma de la variable bajo la transformación de potencias, observamos un decrecimiento lento, característico de una serie no estacionaria. Al diferenciar la serie en un retraso, se observa que la autocorrelación decrece rapidamente, existiendo también en años previo periodos que condicionan el valor actual.  
+
+### Selección del modelo
+
+En primer lugar se ajusta un modelo ARIMA sin incluir el componente estacional. Los gráficos de autocorrelación y autocorrelación parcial sugieren un ARIMA(0,1,1). Sin embargo, para seleccionar los valores de los retrasos en el componente AR y en el componente MA se contrastará esta información con el estadístico Akaike para distintos valores de $p$ y $q$, para un valor de $d$ = 1.   
+
+```{r matriz1, fig.cap="Criterio de AIC para distintas estructuras SARIMA(p,1,q)(P,1,Q)", warning=FALSE}
+knitr::opts_chunk$set(fig.width=unit(50,"cm"), fig.height=unit(11,"cm"))
+
+aic_matrix <- matrix(nrow = 6, ncol = 6)
+
+for (i in 0:6) {
+  for (j in 0:6) {
+    aic = arima(df.data$lamb, order = c(i, 1, j))$aic
+    aic_matrix[i,j] = aic
+  }
+}
+
+colnames(aic_matrix) <- c("MA0", "MA1", "MA2", "MA3", "MA4", "MA5")
+rownames(aic_matrix) <- c("AR0", "AR1", "AR2", "AR3", "AR4", "AR5")
+
+aic_df <- data.frame(aic_matrix)
+aic_df$AR <- rownames(aic_matrix)
+
+aic_pivot <- aic_df %>% 
+  pivot_longer(-AR, names_to = "MA", values_to = "AIC")
+
+aic_pivot$AR <- factor(aic_pivot$AR, levels =  c("AR5", "AR4", "AR3", "AR2", "AR1", "AR0"), ordered = T)
+aic_pivot$MA <- factor(aic_pivot$MA, levels =  c("MA0", "MA1", "MA2", "MA3", "MA4", "MA5"), ordered = T)
+
+matriz1 <- ggplot(aic_pivot, aes(x = MA, y = AR, fill = AIC, label = round(AIC, 2))) +
+  geom_tile(alpha=1) +
+  geom_text(color="Black", size = 2.5) +
+  scale_fill_gradient(low = "white", high="#4c7b8f") +
+  scale_x_discrete(position="top",expand=c(0,0)) +
+  labs(title = "ARIMA(p,1,q)") +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        text = element_text(size = 10)) +
+  xlab("") +
+  ylab("")
+
+
+aic_pivot <- read_delim("aic-sarima011p1q.txt", delim = "\t")
+
+aic_pivot$P <- factor(aic_pivot$P, levels =  c("P5", "P4", "P3", "P2", "P1", "P0"), ordered = T)
+aic_pivot$Q <- factor(aic_pivot$Q, levels =  c("Q0", "Q1", "Q2", "Q3", "Q4", "Q5"), ordered = T)
+
+matriz2 <- ggplot(aic_pivot, aes(x = Q, y = P, fill = AIC, label = round(AIC, 2))) +
+  geom_tile(alpha=1) +
+  geom_text(color="Black", size = 2.5) +
+  scale_fill_gradient(low = "white", high="#4c7b8f") +
+  scale_x_discrete(position="top",expand=c(0,0)) +
+  # coord_fixed() +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        text = element_text(size = 10)) +
+  labs(title = "SARIMA(0,1,1)(P,1,Q)") +
+  xlab("") +
+  ylab("")
+
+
+grid.arrange(matriz1,
+             matriz2,
+             nrow = 1)
+
+```
+
+El criterio de Akaike sugiere un modelo ARIMA(4,1,4). Si evaluamos los residuos como estimación de los errores, la prueba de *Ljung-Box* permite rechazar la idea de autocorrelación. Asimismo, la prueba jarque bera permite rechazar la falta de normalidad en los residuos. También, la prueba de dickey fuller aumentada para estudiar la presencia de raices unitarias en la serie rechaza la hipótesis nula (de no estacionariedad) por lo que el modelo cumple con los supuestos necesarios para afirmar que la serie posee esta estructura.   
+
+```{r contraste de residuos}
+arima1 <- arima(df.data$lamb, order = c(0,1,1))
+# res <- checkresiduals(arima1$residuals)
+# res
+# 
+arima2 <- arima(df.data$lamb, order = c(4,1,4))
+# res2 <- checkresiduals(arima1$residuals)
+# res2
+
+tabla.pruebas <- function(modelo){
+  df <- data.frame(prueba = c("Ljung-Box", "Jarque-Bera", "Dickey-Fuller Aum."),
+                   estadistico.obs = c(Box.test(modelo, type = "Ljung-Box")[[1]] %>% as.numeric(),
+                                       jarque.bera.test(modelo)[[1]] %>% as.numeric(),
+                                       adf.test(modelo)[[1]] %>% as.numeric()),
+                   pvalor = c(Box.test(modelo, type = "Ljung-Box")[[3]],
+                              jarque.bera.test(modelo)[[3]],
+                              adf.test(modelo)[[4]]))
+  colnames(df) <- c("Prueba", "Est. Obs.", "P-valor")
+  return(df)
+}
+# tabla.pruebas(arima1$residuals)
+# tabla.pruebas(arima2$residuals)
+
+
+
+```
+
+Sin embargo, podría mejorarse la capacidad predictiva del proceso autorregresivo incorporando operaores de rezago estacional, extendiendo el modelo ARIMA(0,1,1) y el modelo ARIMA(4,1,4) a un modelo SARIMA(p,1,q)(P,D,Q). Por otro lado, el parámetro P y Q se seleccionarán a través del criterio de Akaike, comparando los resultados de distintos valores de P y Q para el ARIMA(4,1,4) y ARIMA(0,1,1). Se fija el parámetro $D = 1$ dado que disminuye notablemente el criterio de información de Akaike respecto a las mismas estructuras bajo $D = 0$.  
+Los modelos ARMA(4,1,4) poseen valores mayores en los criterios de información de Akaike cuando se incorporan los componentes estacionales, que oscilan alrededor de -320, por lo que se decide continuar con el modelo ARMA(0,1,1) y seleccionar los parámetros de P y Q basándonos en el correlograma y en el criterio de Akaike para distintos valores, los resultados se encuentran en la figura 4.  
+
+
+```{r}
+sarima1 <- arima(df.data$lamb, order = c(0,1,1), seasonal = c(0,1,0))
+sarima2 <- arima(df.data$lamb, order = c(0,1,1), seasonal = c(0,1,3))
+
+estadisticos.residuos <- data.frame(Modelo = c(rep("arima(0,1,1)",3), rep("arima(4,1,4)", 3), rep("sarima(0,1,1)(0,1,0)", 3), rep("sarima(0,1,1)(0,1,3)", 3)),
+                                    rbind(tabla.pruebas(arima1$residuals),
+                                          tabla.pruebas(arima2$residuals),
+                                          tabla.pruebas(sarima1$residuals),
+                                          tabla.pruebas(sarima1$residuals)))
+
+colnames(estadisticos.residuos) <- c("Modelo", "Prueba para detectar", "Est. Obs.", "P-Valor")
+estadisticos.residuos$`Est. Obs.` <- round(estadisticos.residuos$`Est. Obs.`, 3)
+estadisticos.residuos$`P-Valor` <- round(estadisticos.residuos$`P-Valor`, 3)
+
+tabla <- kable(estadisticos.residuos) %>%
+  kable_styling(font_size = 8, latex_options = "hold_position") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_classic(full_width = F) 
+
+tabla
+  
+
+```
+
+\begin{center}
+Tabla 02: Contraste de supuestos en los modelos seleccionados
+\end{center}
+
+Para el ARIMA(0,1,1) los mejores valores de $P$ y $Q$ si el componente estacional está diferenciado son $P = 0$ y $Q = 0$. Sin embargo, en el correlograma simple de la serie diferenciada (figura 2) se puede observar que cada cuatro meses hay una correlación significativa con los valores de actuales de la variable, sugiriendo un componente MA(3) en la estacionalidad. En la tabla 2 se exponen los estadísticos de contraste para la evaluación de los supuestos de los modelos.  
+En los modelos ARIMA(p,d,q) hay evidencia para afirmar que los supuestos se cumplen. Sin embargo, al incorporar el componente estacional se observa que los residuos están incorrelacionados y que no hay presencia de raíces unitarias. Sin embargo, no hay evidencia para afirmar que se distribuyan normalmente.  
+Dado que el objetivo es pronosticar la serie, se comparará el RSME de todos los modelos, con la variable transformada, para seleccionar los mejores pronósticos. Se incluye además el modelo SARIMA(0,1,1) propuesto por la función *auto.arima* del paquete *forecast*.  
+
+```{r testrv}
+# Funciones para modelar
+
+# arima011 <- function(x, h){
+#   forecast(arima(x, order = c(0,1,1)), h = h)
+# }
+# 
+# arima414 <- function(x, h){
+#   forecast(arima(x, order = c(4,1,4)), h = h)
+# }
+# 
+# sarima011010 <- function(x, h){
+#   forecast(arima(x, order = c(0,1,1), seasonal = c(0,1,0)), h = h)
+# }
+# 
+# sarima011011 <- function(x, h){
+#   forecast(arima(x, order = c(0,1,1), seasonal = c(0,1,1)), h = h)
+# }
+# 
+# sarima011013 <- function(x, h){
+#   forecast(arima(x, order = c(0,1,1), seasonal = c(0,1,3)), h = h)
+# }
+# 
+# # Validación
+# cv_modelo1 <- tsCV(df.data$lamb, meanf, h = 12)
+# cv_modelo2 <- tsCV(df.data$lamb, rwf, h = 12)
+# cv_modelo3 <- tsCV(df.data$lamb, snaive, h = 12)
+# 
+# # Validacion cruzada
+# cv_modelo4 <- tsCV(df.data$lamb, arima011, h = 12)
+# cv_modelo5 <- tsCV(df.data$lamb, arima414, h = 12)
+# cv_modelo6 <- tsCV(df.data$lamb, sarima011010, h = 12)
+# cv_modelo7 <- tsCV(df.data$lamb, sarima011011, h = 12)
+# cv_modelo8 <- tsCV(df.data$lamb, sarima011013, h = 12)
+
+# ## RMSE
+# rmse_1 <- data.frame(modelo = c("Media", "Naive", "Naive Est.", "ARIMA(011)", "ARIMA(414)", "SARIMA(011)(010)", "SARIMA(011)(011)" ,"SARIMA(011)(013)"),
+#                      rbind(round(sqrt(colMeans(cv_modelo1^2, na.rm = T)), 3),
+#                            round(sqrt(colMeans(cv_modelo2^2, na.rm = T)), 3),
+#                            round(sqrt(colMeans(cv_modelo3^2, na.rm = T)), 3),
+#                            round(sqrt(colMeans(cv_modelo4^2, na.rm = T)), 3),
+#                            round(sqrt(colMeans(cv_modelo5^2, na.rm = T)), 3),
+#                            round(sqrt(colMeans(cv_modelo6^2, na.rm = T)), 3),
+#                            round(sqrt(colMeans(cv_modelo7^2, na.rm = T)), 3),
+#                            round(sqrt(colMeans(cv_modelo8^2, na.rm = T)), 3)))
+# colnames(rmse_1) <- c("Modelo", paste0("H", rep(1:12)))
+# write_delim(rmse_1, "rmse_tot_final.txt", delim = "\t")
+
+rmse_tot <- read_delim("rmse_tot_final.txt", delim = "\t")
+
+tabla <- kable(rmse_tot) %>%
+  kable_styling(font_size = 8, latex_options = "hold_position") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_classic(full_width = T) 
+
+tabla
+```
+
+\begin{center}
+Tabla 03: RSME de los distintos modelos con variable transformada
+\end{center}
+
+En la tabla 03 puede notarse que el modelo con mejor capacidad predictiva para horizontes cercanos y lejanos es el SARIMA(0,1,1)(0,1,1). Por otro lado, los errores del método Naïve son similares a los modelos ARIMA (sin componente estacional) e incluso menores para ciertos periodos. 
+
+```{r estimacion final, fig.cap = "Comparación de modelos en conjunto de prueba"}
+training <- window(df.data$lamb,
+                   start = 1949, 
+                   end = c(1959,12))
+
+testing <- window(df.data$lamb, 
+                  start = 1960)
+
+# Modelos
+fsarima1 <- forecast(arima(training, order = c(0,1,1), seasonal = c(0,1,0)), h = 12)
+fsarima2 <-forecast(arima(training, order = c(0,1,1), seasonal = c(0,1,3)), h = 12)
+fsarima3 <- forecast(arima(training, order = c(0,1,1), seasonal = c(0,1,1)), h = 12)
+
+# RMSE
+# accuracy(fsarima1, testing)
+# accuracy(fsarima2, testing)
+# accuracy(fsarima3, testing)
+
+# Fechas pronostico
+fecha.test <- seq(as.Date("1960-01-01"), as.Date("1960-12-01"), by = "month")
+
+# df de data
+df.data <- data.frame(fecha = seq(as.Date("1949-01-01"), as.Date("1960-12-01"), by = "month"), pasajeros = df.data$lamb)
+df.data$tipo <- c(rep("training", 132), rep("test", 12))
+
+# Agrego pronosticos
+pronostico1 <- data.frame(fsarima1) %>% 
+  mutate(fecha = fecha.test, tipo = "sarima(011)(010)") %>% 
+  select(fecha, pasajeros = Point.Forecast, tipo) %>% 
+  rbind(df.data)
+
+pronostico2 <- data.frame(fsarima2) %>% 
+  mutate(fecha = fecha.test, tipo = "sarima(011)(013)") %>% 
+  select(fecha, pasajeros = Point.Forecast, tipo) %>% 
+  rbind(pronostico1)
+
+pronostico3 <- data.frame(fsarima3) %>% 
+  mutate(fecha = fecha.test, tipo = "sarima(011)(011)") %>% 
+  select(fecha, pasajeros = Point.Forecast, tipo) %>% 
+  rbind(pronostico2)
+
+# Transformar nuevamente la variable (solo la transformación de cox porque las diferencias son del ARIMA)
+pronostico3$pasajeros_original <- round((pronostico3$pasajeros * (-0.3) + 1) ^ (1/(-0.3)),0)
+
+```
+
+```{r estimacion final1, fig.cap = "Comparación de modelos en conjunto de prueba", fig.width="30%", fig.height="50%"}
+# plot modelos simples
+plt <- ggplot(pronostico3, aes(x = fecha, y = pasajeros_original, col = tipo), size = 2) +
+  geom_line() + 
+  ylab("Pasajeros") +
+  xlab("Fecha")
+
+plt
+```
+\newpage
+
+## Estimación definitiva
+Por último, se obtienen las predicciones y los intervalos de confianza para el modelo SARIMA(0,1,1)(0,1,1) que contiene el menor RMSE para horizontes temporales mayores. Las estimaciones basadas en la estructura que más reduce el error en un periodo de 12 meses, con una confianza del 95 %, durante la década de 1961 se presentan en la tabla a continuación. De esta forma, puede afirmarse que la cantidad de pasajeros en la aerolinea, durante 1961, estará en promedio, entre 5454 y 7448 pasajeros. 
+
+```{r tablafinal}
+# lambda -0.30
+data.lamb <- (data^(-0.30)-1)/(-0.30)
+
+# Gráficos
+df.data$lamb <- data.lamb
+
+fsarima3_final <- forecast(arima(df.data$lamb, order = c(0,1,1), seasonal = c(0,1,1)), h = 12)
+fechas.pronostico <- seq(as.Date("1961-01-01"), as.Date("1961-12-01"), by = "month")
+
+antitransformacion <- function(x) {
+  final <- round((x * (-0.3) + 1) ^ (1/(-0.3)),0)
+  return(final)
+}
+
+pronostico.final <- apply(data.frame(fsarima3_final), MARGIN = 2, FUN = antitransformacion)
+
+pronostico.final <- data.frame(fechas = fechas.pronostico, pronostico.final)
+colnames(pronostico.final) <- c("fecha", "Estimación puntual", "Q10", "Q90", "Q25", "Q975")
+
+tabla.pronostico <- pronostico.final %>% 
+  select(Fecha = fecha, Q2.5 = Q25, Puntual = `Estimación puntual`, Q975)
+
+rownames(tabla.pronostico) <- NULL
+
+tabla <- kable(tabla.pronostico) %>%
+  kable_styling(font_size = 8, latex_options = "hold_position") %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE) %>%
+  kable_classic(full_width = F) 
+
+tabla
+```
+
+\begin{center}
+Tabla 04: Estimaciones en las cantidades de pasajeros para 1961
+\end{center}
+
+# Conclusiones
+Se compararon 8 modelos entre los que se incluyeron modelos simples y estructuras más complejas, como modelos de la familia SARIMA(p,d,q)(P,D,Q). En cada modelo, se contrastaron los supuestos de incorrelación, normalidad y raices unitarias en cada modelo. Los modelos más simples (basados en la media, Naïve y Naïve Estacional) no cumplen con los supuestos de autocorrelación, mientras que los modelos más complejos (ARIMA estacionales) no cumplen con los supuestos de normalidad.  
+Respecto a las raíces unitarias, la prueba de Diceky-Fuller aumentada, cuya hipótesis alternativa es la presencia de estacionariedad, es superada por los modelos SARIMA indicando que no presenta raices unitarias y por lo tanto la serie no pierde su condición de invertibilidad frente a las diferenciaciones necesarias para que tenga media y varianza constante. 
+Respecto a la evaluación de los pronósticos, los modelos SARIMA tienen mejor capacidad predictiva en horizontes ceranos y lejanos. Respecto a los modelos simples, mientras el Naïve Estacional mantiene su capacidad predictiva en todo el intervalo, el modelo Naïve no estacional es mejor para periodos inmediatos siguientes, aunque su error es mayor al SARIMA.  
+
+# Bibliografía
+Box, G. E. P., Jenkins, G. M. and Reinsel, G. C. (1976) *Time Series Analysis, Forecasting and Control. Third Edition.* Holden-Day. Series G.
+
+
+
+
+
